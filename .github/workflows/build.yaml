@@ -1,0 +1,74 @@
+name: Build GhostScript for ARM and x86
+
+on:
+  push:
+    tags:
+      - 'ghostpdl*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs: 
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    strategy:
+      matrix:
+        architecture: [amd64, arm64]
+        include:
+          - architecture: amd64
+            docker_platform: linux/amd64
+          - architecture: arm64
+            docker_platform: linux/arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up QEMU for cross-platform builds
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build codebase for ${{ matrix.architecture }}
+        run: |
+          echo "Building for ${{ matrix.architecture }}..."
+          ./autogen.sh
+          make -j $(nproc)
+
+      - name: Archive build output
+        run: |
+          zip -r build-${{ matrix.architecture }}.zip bin/*
+        shell: bash
+        env:
+          ARCHIVE_NAME: build-${{ matrix.architecture }}.zip
+
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.architecture }}
+          path: build-${{ matrix.architecture }}.zip
+      
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: build-*
+
+      - name: Fix Zip Names
+        run: |
+          mv build-arm64/* ghostscript-arm64-${GITHUB_REF##*/}.zip
+          mv build-amd64/* ghostscript-amd64-${GITHUB_REF##*/}.zip
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN  }}
+        with:
+          files: |
+            ghostscript-*.zip
